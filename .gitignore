@@ -1,0 +1,9 @@
+rbenv/
+venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+chroma_store/
+starter.zip
+users.json
