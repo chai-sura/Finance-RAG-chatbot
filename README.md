@@ -1,4 +1,3 @@
-cat > README.md << 'ENDOFREADME'
 # 🔐 VaultDesk — Role-Based RAG Assistant
 
 VaultDesk is an internal AI assistant that answers questions from company documents while respecting **role-based access control (RBAC)**. Each user sees only what their clearance permits — a finance user can't retrieve HR salary data, an employee can't see marketing reports, and a C-level executive sees everything.
@@ -14,35 +13,24 @@ Internal knowledge bases face a tension: make information easy to find, but don'
 ---
 
 ## How it works
+
+​```
 User signs in ──> JWT issued (carries role)
-
-│
-
-▼
-
+       │
+       ▼
 Question + history ──> /chat (JWT-protected)
-
-│
-
-├─ rewrite follow-ups into standalone questions (history-aware)
-
-├─ resolve permissions for the user's role
-
-├─ embed the query (BGE)
-
-├─ search ChromaDB  ◄── filtered to allowed roles (RBAC)
-
-├─ re-check each chunk's role (defense-in-depth guard)
-
-├─ build a grounded prompt (context + citations)
-
-└─ generate the answer (Groq / Llama 3.1)
-
-│
-
-▼
-
+       │
+       ├─ rewrite follow-ups into standalone questions (history-aware)
+       ├─ resolve permissions for the user's role
+       ├─ embed the query (BGE)
+       ├─ search ChromaDB  ◄── filtered to allowed roles (RBAC)
+       ├─ re-check each chunk's role (defense-in-depth guard)
+       ├─ build a grounded prompt (context + citations)
+       └─ generate the answer (Groq / Llama 3.1)
+       │
+       ▼
 Answer + source citations
+​```
 
 ### Two phases
 
@@ -89,110 +77,74 @@ Answer + source citations
 ---
 
 ## Architecture
-┌─────────────┐      ┌──────────────────────────────────────┐
 
-│  Streamlit  │      │            FastAPI backend           │
-
-│  frontend   │      │                                      │
-
-│             │      │  /login ──> verify + issue JWT       │
-
-│  login ─────┼─────>│                                      │
-
-│  chat  ─────┼─────>│  /chat  ──> JWT check                │
-
-│             │      │             rewrite query (history)  │
-
-│  bubbles <──┼──────┤             RBAC-filtered retrieval  │
-
-│  + sources  │      │             guard ─> generate        │
-
-└─────────────┘      └───────────────┬──────────────────────┘
-
-│
-
-┌───────────┴───────────┐
-
-│       ChromaDB         │
-
-│  (chunks + role tags)  │
-
-└────────────────────────┘
+​```
+Streamlit frontend              FastAPI backend
+  login  ───────────────────>     /login  -> verify + issue JWT
+  chat   ───────────────────>     /chat   -> JWT check
+                                            rewrite query (history)
+  bubbles + sources  <───────             RBAC-filtered retrieval
+                                            guard -> generate
+                                               │
+                                               ▼
+                                          ChromaDB
+                                     (chunks + role tags)
+​```
 
 ---
 
 ## Project structure
+
+​```
 .
-
 ├── app/
-
 │   ├── main.py              # FastAPI app: /login, /chat endpoints
-
 │   ├── schemas/
-
 │   │   └── chat.py          # request/response models
-
 │   ├── services/
-
 │   │   ├── chunking.py      # documents -> tagged chunks
-
 │   │   ├── embeddings.py    # BGE embedding wrapper
-
 │   │   ├── vectorstore.py   # Chroma build + RBAC-filtered search
-
 │   │   ├── rag.py           # retrieve + guard + generate
-
 │   │   └── llm.py           # Groq calls + query rewriting
-
 │   └── utils/
-
 │       ├── auth.py          # JWT issue/verify, password hashing
-
 │       └── permissions.py   # role -> allowed-roles map
-
 ├── frontend/
-
 │   └── app.py               # Streamlit UI
-
 ├── scripts/
-
 │   └── hash_passwords.py    # one-time: hash demo passwords
-
 ├── resources/data/          # company documents (by department)
-
 │   ├── engineering/
-
 │   ├── finance/
-
 │   ├── general/
-
 │   ├── hr/
-
 │   └── marketing/
-
 ├── chroma_store/            # persisted vectors (generated, gitignored)
-
 ├── users.json               # demo users (gitignored)
-
 ├── .env                     # secrets (gitignored)
-
 └── requirements.txt
+​```
 
 ---
 
 ## Setup
 
 ### 1. Install dependencies
-python -m venv venv && source venv/bin/activate
 
+​```bash
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+​```
 
 ### 2. Configure secrets
 
 Create a `.env` file in the project root:
-GROQ_API_KEY=your_groq_key_here
 
+​```
+GROQ_API_KEY=your_groq_key_here
 JWT_SECRET=your_long_random_secret
+​```
 
 Get a free Groq API key at https://console.groq.com.
 Generate a JWT secret with: `python -c "import secrets; print(secrets.token_hex(32))"`
@@ -200,18 +152,30 @@ Generate a JWT secret with: `python -c "import secrets; print(secrets.token_hex(
 ### 3. Set up demo users
 
 `users.json` holds demo accounts with bcrypt-hashed passwords (gitignored). If creating fresh, add usernames/roles, then run:
+
+​```bash
 python scripts/hash_passwords.py
+​```
 
 ### 4. Build the vector index (one-time)
+
+​```bash
 python -m app.services.vectorstore
+​```
 
 ### 5. Run
 
 Backend (terminal 1):
+
+​```bash
 uvicorn app.main:app --reload
+​```
 
 Frontend (terminal 2):
+
+​```bash
 streamlit run frontend/app.py
+​```
 
 Open the Streamlit URL, sign in, and ask away.
 
@@ -245,4 +209,3 @@ The interface uses a **clearance-as-identity** concept: once signed in, the user
 ## Notes
 
 VaultDesk uses synthetic demo data for a fictional company (FinSolve Technologies). The vector store, `.env`, and `users.json` are gitignored and not included in the repository.
-ENDOFREADME
