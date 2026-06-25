@@ -1,38 +1,42 @@
-import json
-from pathlib import Path
-from typing import Dict
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+"""
+main.py — the FastAPI application.
 
-app = FastAPI()
-security = HTTPBasic()
+Endpoints:
+  POST /login  -> verify credentials, return a JWT
+  POST /chat   -> (JWT-protected) answer a question for the user's role
+  GET  /       -> simple health check
 
-# Load user database from a gitignored file (keeps credentials out of source)
-USERS_PATH = Path(__file__).resolve().parent.parent / "users.json"
-with open(USERS_PATH) as f:
-    users_db: Dict[str, Dict[str, str]] = json.load(f)
+Auth is handled in app.utils.auth; RAG in app.services.rag. main.py just
+wires them to HTTP endpoints.
+"""
 
+from fastapi import FastAPI, Depends
 
-# Authentication dependency
-def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
-    username = credentials.username
-    password = credentials.password
-    user = users_db.get(username)
-    if not user or user["password"] != password:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {"username": username, "role": user["role"]}
+from app.schemas.chat import LoginRequest, ChatRequest, ChatResponse
+from app.utils.auth import verify_user, create_token, get_current_user
+from app.services.rag import answer_question
+
+app = FastAPI(title="VaultDesk")
 
 
-@app.get("/login")
-def login(user=Depends(authenticate)):
-    return {"message": f"Welcome {user['username']}!", "role": user["role"]}
+@app.get("/")
+def health():
+    """Simple check that the server is up."""
+    return {"status": "ok"}
 
 
-@app.get("/test")
-def test(user=Depends(authenticate)):
-    return {"message": f"Hello {user['username']}! You can now chat.", "role": user["role"]}
+@app.post("/login")
+def login(req: LoginRequest):
+    """Verify username/password, return a signed JWT carrying the role."""
+    # verify_user checks the password against the stored bcrypt hash and
+    # raises 401 if it's wrong.
+    user = verify_user(req.username, req.password)
+    token = create_token(user["username"], user["role"])
+    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
 
 
-@app.post("/chat")
-def query(user=Depends(authenticate), message: str = "Hello"):
-    return "Implement this endpoint."
+@app.post("/chat", response_model=ChatResponse)
+def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
+    history = [{"role": m.role, "content": m.content} for m in req.history]
+    result = answer_question(req.message, role=user["role"], history=history)
+    return ChatResponse(answer=result["answer"], sources=result["sources"])
