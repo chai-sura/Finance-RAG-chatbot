@@ -22,11 +22,11 @@ User signs in ──> JWT issued (carries role)
 
 Question + history ──> /chat (JWT-protected)
 
- │
+│
 
 ├─ rewrite follow-ups into standalone questions (history-aware)
 
-    ├─ resolve permissions for the user's role
+├─ resolve permissions for the user's role
 
 ├─ embed the query (BGE)
 
@@ -40,7 +40,7 @@ Question + history ──> /chat (JWT-protected)
 
 │
 
-  ▼
+▼
 
 Answer + source citations
 
@@ -111,11 +111,11 @@ Answer + source citations
 
 │
 
-                         ┌───────────┴───────────┐
+┌───────────┴───────────┐
 
-           │       ChromaDB         │
+│       ChromaDB         │
 
-                       │  (chunks + role tags)  │
+│  (chunks + role tags)  │
 
 └────────────────────────┘
 
