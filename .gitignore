@@ -7,3 +7,4 @@ __pycache__/
 chroma_store/
 starter.zip
 users.json
+eval_results.csv

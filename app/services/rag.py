@@ -6,6 +6,7 @@ cites ONLY the sources the model actually used (not everything retrieved).
 """
 
 import re
+from app.services.reranker import rerank
 from app.services.vectorstore import search
 from app.services.llm import generate, rewrite_query
 from app.utils.permissions import allowed_roles_for
@@ -86,12 +87,23 @@ def answer_question(question: str, role: str, history: list = None, k: int = 8) 
     search_query = rewrite_query(history, question)
 
     allowed = allowed_roles_for(role)
-    results = search(search_query, k=k, allowed_roles=allowed)
+
+    # Cast a WIDER net for the reranker to choose from (retrieve more, then
+    # rerank down). 20 candidates in, best 5 out.
+    results = search(search_query, k=20, allowed_roles=allowed)
 
     docs = results["documents"][0]
     metas = results["metadatas"][0]
 
-    safe = [(doc, meta) for doc, meta in zip(docs, metas) if meta["role"] in allowed]
+    # Guard FIRST (drop anything outside the user's clearance), then rerank
+    # the allowed candidates. Order matters: never let the reranker even
+    # consider unauthorized chunks.
+    allowed_candidates = [
+        (doc, meta) for doc, meta in zip(docs, metas) if meta["role"] in allowed
+    ]
+
+    # Rerank the allowed candidates and keep the best 5.
+    safe = rerank(search_query, allowed_candidates, top_n=5)
 
     if not safe:
         return {

@@ -14,37 +14,40 @@ Internal knowledge bases face a tension: make information easy to find, but don'
 
 ## How it works
 
-​```
-User signs in ──> JWT issued (carries role)
-       │
-       ▼
-Question + history ──> /chat (JWT-protected)
-       │
-       ├─ rewrite follow-ups into standalone questions (history-aware)
-       ├─ resolve permissions for the user's role
-       ├─ embed the query (BGE)
-       ├─ search ChromaDB  ◄── filtered to allowed roles (RBAC)
-       ├─ re-check each chunk's role (defense-in-depth guard)
-       ├─ build a grounded prompt (context + citations)
-       └─ generate the answer (Groq / Llama 3.1)
-       │
-       ▼
-Answer + source citations
-​```
+A signed-in user sends a question. The backend:
+
+1. Verifies the user's **JWT** and reads their role from it.
+2. **Rewrites** vague follow-ups (e.g. "why?") into standalone questions using conversation history.
+3. **Embeds** the query and **searches ChromaDB**, filtered to the roles the user is allowed to see (RBAC).
+4. Runs an independent **guard** that re-checks each retrieved chunk's role before anything reaches the model (defense in depth).
+5. Builds a grounded prompt and **generates** the answer with Groq / Llama 3.1.
+6. Returns the answer plus the **sources** it actually used.
+
+```mermaid
+flowchart TD
+    A[User signs in] --> B[JWT issued, carries role]
+    B --> C[Question + history → /chat]
+    C --> D[Rewrite follow-up into standalone question]
+    D --> E[Embed query with BGE]
+    E --> F[Search ChromaDB — filtered to allowed roles]
+    F --> G[Guard: re-check each chunk's role]
+    G --> H[Build grounded prompt + generate with Groq]
+    H --> I[Answer + source citations]
+```
 
 ### Two phases
 
-1. **Ingestion (run once):** company documents are chunked, tagged by department, embedded into vectors, and stored in ChromaDB.
-2. **Serving:** users log in and ask questions; the system retrieves role-scoped chunks and generates cited answers.
+- **Ingestion (run once):** company documents are chunked, tagged by department, embedded into vectors, and stored in ChromaDB.
+- **Serving:** users log in and ask questions; the system retrieves role-scoped chunks and generates cited answers.
 
 ---
 
 ## Key features
 
-- **Role-based access control** — every document chunk is tagged by department. Retrieval is filtered to the user's allowed roles, then an **independent guard** re-checks each result before generation (defense in depth).
+- **Role-based access control** — every document chunk is tagged by department. Retrieval is filtered to the user's allowed roles, then an independent guard re-checks each result before generation (defense in depth).
 - **Grounded, cited answers** — responses come only from retrieved documents, each answer listing the sources it actually used. No hallucination.
 - **Structure-aware chunking** — Markdown is split by heading hierarchy (preserving the heading path for precise citations); CSV rows are converted to natural-language chunks so tabular data is searchable.
-- **History-aware retrieval** — vague follow-ups ("why", "what else?") are rewritten into standalone questions using conversation context before retrieval.
+- **History-aware retrieval** — vague follow-ups are rewritten into standalone questions using conversation context before retrieval.
 - **Secure authentication** — JWT with bcrypt-hashed passwords; the role is carried in a signed token that can't be forged client-side.
 - **Clearance-themed UI** — a Streamlit interface that color-codes the session by the user's role, making access level visible at a glance.
 
@@ -76,55 +79,27 @@ Answer + source citations
 
 ---
 
-## Architecture
-
-​```
-Streamlit frontend              FastAPI backend
-  login  ───────────────────>     /login  -> verify + issue JWT
-  chat   ───────────────────>     /chat   -> JWT check
-                                            rewrite query (history)
-  bubbles + sources  <───────             RBAC-filtered retrieval
-                                            guard -> generate
-                                               │
-                                               ▼
-                                          ChromaDB
-                                     (chunks + role tags)
-​```
-
----
-
 ## Project structure
 
-​```
-.
-├── app/
-│   ├── main.py              # FastAPI app: /login, /chat endpoints
-│   ├── schemas/
-│   │   └── chat.py          # request/response models
-│   ├── services/
-│   │   ├── chunking.py      # documents -> tagged chunks
-│   │   ├── embeddings.py    # BGE embedding wrapper
-│   │   ├── vectorstore.py   # Chroma build + RBAC-filtered search
-│   │   ├── rag.py           # retrieve + guard + generate
-│   │   └── llm.py           # Groq calls + query rewriting
-│   └── utils/
-│       ├── auth.py          # JWT issue/verify, password hashing
-│       └── permissions.py   # role -> allowed-roles map
-├── frontend/
-│   └── app.py               # Streamlit UI
-├── scripts/
-│   └── hash_passwords.py    # one-time: hash demo passwords
-├── resources/data/          # company documents (by department)
-│   ├── engineering/
-│   ├── finance/
-│   ├── general/
-│   ├── hr/
-│   └── marketing/
-├── chroma_store/            # persisted vectors (generated, gitignored)
-├── users.json               # demo users (gitignored)
-├── .env                     # secrets (gitignored)
-└── requirements.txt
-​```
+- **app/** — the application
+  - **main.py** — FastAPI app: `/login`, `/chat` endpoints
+  - **schemas/chat.py** — request/response models
+  - **services/**
+    - **chunking.py** — documents → tagged chunks
+    - **embeddings.py** — BGE embedding wrapper
+    - **vectorstore.py** — Chroma build + RBAC-filtered search
+    - **rag.py** — retrieve + guard + generate
+    - **llm.py** — Groq calls + query rewriting
+  - **utils/**
+    - **auth.py** — JWT issue/verify, password hashing
+    - **permissions.py** — role → allowed-roles map
+- **frontend/app.py** — Streamlit UI
+- **scripts/hash_passwords.py** — one-time: hash demo passwords
+- **resources/data/** — company documents, by department (engineering, finance, general, hr, marketing)
+- **chroma_store/** — persisted vectors (generated, gitignored)
+- **users.json** — demo users (gitignored)
+- **.env** — secrets (gitignored)
+- **requirements.txt**
 
 ---
 
@@ -132,50 +107,49 @@ Streamlit frontend              FastAPI backend
 
 ### 1. Install dependencies
 
-​```bash
+```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-​```
+```
 
 ### 2. Configure secrets
 
 Create a `.env` file in the project root:
 
-​```
+```bash
 GROQ_API_KEY=your_groq_key_here
 JWT_SECRET=your_long_random_secret
-​```
+```
 
-Get a free Groq API key at https://console.groq.com.
-Generate a JWT secret with: `python -c "import secrets; print(secrets.token_hex(32))"`
+Get a free Groq API key at https://console.groq.com. Generate a JWT secret with `python -c "import secrets; print(secrets.token_hex(32))"`.
 
 ### 3. Set up demo users
 
 `users.json` holds demo accounts with bcrypt-hashed passwords (gitignored). If creating fresh, add usernames/roles, then run:
 
-​```bash
+```bash
 python scripts/hash_passwords.py
-​```
+```
 
 ### 4. Build the vector index (one-time)
 
-​```bash
+```bash
 python -m app.services.vectorstore
-​```
+```
 
 ### 5. Run
 
 Backend (terminal 1):
 
-​```bash
+```bash
 uvicorn app.main:app --reload
-​```
+```
 
 Frontend (terminal 2):
 
-​```bash
+```bash
 streamlit run frontend/app.py
-​```
+```
 
 Open the Streamlit URL, sign in, and ask away.
 

@@ -1,0 +1,122 @@
+[
+  {
+    "question": "Where can one find the Kubernetes Documentation?",
+    "reference_answer": "kubernetes.io",
+    "role": "engineering",
+    "source": "engineering_master_doc.md"
+  },
+  {
+    "question": "What type of database is used for storing user profiles, preferences, and semi-structured data?",
+    "reference_answer": "MongoDB",
+    "role": "engineering",
+    "source": "engineering_master_doc.md"
+  },
+  {
+    "question": "What is the purpose of FinSolve's engineering document?",
+    "reference_answer": "The purpose of FinSolve's engineering document is to outline the technical architecture, development processes, and operational guidelines for FinSolve's product ecosystem.",
+    "role": "engineering",
+    "source": "engineering_master_doc.md"
+  },
+  {
+    "question": "What is the minimum unit test coverage required before code review?",
+    "reference_answer": "85%",
+    "role": "engineering",
+    "source": "engineering_master_doc.md"
+  },
+  {
+    "question": "What is a strategy to mitigate the risk of vendor cost inflation?",
+    "reference_answer": "Developing a comprehensive vendor risk management plan.",
+    "role": "finance",
+    "source": "financial_summary.md"
+  },
+  {
+    "question": "What percentage of total cash flows did investments in research and development, new market entry, and acquisitions represent?",
+    "reference_answer": "20%",
+    "role": "finance",
+    "source": "financial_summary.md"
+  },
+  {
+    "question": "What percentage of Vendor Services expenses were allocated to end-of-year promotions and B2B marketing efforts?",
+    "reference_answer": "40%",
+    "role": "finance",
+    "source": "quarterly_financial_report.md"
+  },
+  {
+    "question": "What was the percentage increase in FinSolve Technologies's cash flow from operations?",
+    "reference_answer": "20%",
+    "role": "finance",
+    "source": "financial_summary.md"
+  },
+  {
+    "question": "How often are performance reviews conducted?",
+    "reference_answer": "Annual and mid-year reviews.",
+    "role": "general",
+    "source": "employee_handbook.md"
+  },
+  {
+    "question": "What should you do if you experience a data breach?",
+    "reference_answer": "Report it to the IT security team immediately.",
+    "role": "general",
+    "source": "employee_handbook.md"
+  },
+  {
+    "question": "What percentage of the basic salary is the minimum bonus required by law?",
+    "reference_answer": "8.33%",
+    "role": "general",
+    "source": "employee_handbook.md"
+  },
+  {
+    "question": "What is the core value that involves treating everyone with dignity?",
+    "reference_answer": "Respect",
+    "role": "general",
+    "source": "employee_handbook.md"
+  },
+  {
+    "question": "When did Ananya Khan join the company?",
+    "reference_answer": "2019-05-14",
+    "role": "hr",
+    "source": "hr_data.csv"
+  },
+  {
+    "question": "What is Ishaan Singh's job title?",
+    "reference_answer": "Data Scientist",
+    "role": "hr",
+    "source": "hr_data.csv"
+  },
+  {
+    "question": "When did Aadhya Saxena join the company?",
+    "reference_answer": "2022-12-20",
+    "role": "hr",
+    "source": "hr_data.csv"
+  },
+  {
+    "question": "What is Krishna Malhotra's job title?",
+    "reference_answer": "Business Analyst",
+    "role": "hr",
+    "source": "hr_data.csv"
+  },
+  {
+    "question": "What percentage reduction in churn was achieved by utilizing predictive analytics to deliver personalized offers?",
+    "reference_answer": "8%",
+    "role": "marketing",
+    "source": "market_report_q4_2024.md"
+  },
+  {
+    "question": "What percentage increase in new customers was achieved, outpacing the industry average?",
+    "reference_answer": "20%",
+    "role": "marketing",
+    "source": "marketing_report_2024.md"
+  },
+  {
+    "question": "What was the return on investment (ROI) for FinSolve Technologies's digital campaigns?",
+    "reference_answer": "3.5x",
+    "role": "marketing",
+    "source": "marketing_report_2024.md"
+  },
+  {
+    "question": "What region was the company strategically expanding into during Q2 2024?",
+    "reference_answer": "Southeast Asia.",
+    "role": "marketing",
+    "source": "marketing_report_q2_2024.md"
+  }
+]

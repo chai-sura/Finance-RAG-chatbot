@@ -253,7 +253,7 @@ if st.session_state.role:
 inject_css(accent)
 
 # Brand bar at the very top, once, above the tabs.
-topbar(accent,
+_ = topbar(accent,
        st.session_state.username if st.session_state.token else None,
        show_signout=bool(st.session_state.token),
        key_suffix="top")
@@ -262,6 +262,9 @@ st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
 tab_home, tab_about = st.tabs(["Home", "About"])
 with tab_home:
-    render_home() if st.session_state.token else render_login()
+    if st.session_state.token:
+        render_home()
+    else:
+        render_login()
 with tab_about:
     render_about()
