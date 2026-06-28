@@ -58,19 +58,36 @@ def generate(prompt: str, system: str = "You are a helpful assistant.") -> str:
 
 def rewrite_query(history: list, new_message: str) -> str:
     """Rewrite a possibly-vague follow-up into a standalone question.
-
     history: list of {"role": "user"/"assistant", "content": str}
     Returns a self-contained question suitable for retrieval.
-    If there's no useful history, returns the message unchanged.
+
+    Only rewrites when the new message actually depends on prior context.
+    Self-contained questions pass through UNCHANGED, so unrelated history
+    can't poison them (e.g. "what is the leave policy?" after SQL questions).
     """
     if not history:
         return new_message
 
-    # Build a short transcript of recent turns for context.
+    msg = new_message.strip()
+    words = msg.split()
+
+    # A message that's short OR contains a reference/follow-up cue likely
+    # depends on prior context. Everything else is treated as self-contained.
+    is_short = len(words) <= 3
+    has_followup_cue = any(
+        cue in msg.lower()
+        for cue in (" it", " it?", " that", " those", " this", " one",
+                    "them", "what about", "how about", "why", "and ", "ones")
+    )
+
+    # Self-contained question -> use as-is, do NOT rewrite.
+    if not is_short and not has_followup_cue:
+        return new_message
+
+    # Looks like a follow-up -> rewrite using recent context.
     transcript = "\n".join(
         f"{m['role'].capitalize()}: {m['content']}" for m in history[-6:]
     )
-
     prompt = (
         f"Given this conversation:\n{transcript}\n\n"
         f"The user now says: \"{new_message}\"\n\n"
@@ -79,15 +96,11 @@ def rewrite_query(history: list, new_message: str) -> str:
         f"already standalone, return it unchanged. Respond with ONLY the "
         f"rewritten question, nothing else."
     )
-
     rewritten = generate(
         prompt,
         system="You rewrite follow-up messages into standalone questions.",
     ).strip()
-
-    # Safety: if the model returns something odd or empty, fall back.
     return rewritten if rewritten else new_message
-
 
 # Self-test: run `python -m app.services.llm` to confirm the key works and
 # we can reach Groq, BEFORE wiring it into the RAG flow.
