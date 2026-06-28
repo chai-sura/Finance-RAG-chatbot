@@ -183,9 +183,8 @@ python -m scripts.evaluate
 
 ## Roadmap
 
-- **Single Sign-On (SSO)** — integrate enterprise identity providers (OIDC) so access is managed centrally.
-- **Human-in-the-loop** — when retrieved sources conflict, surface them and let the user choose which to prioritize.
 - **Self-verification** — an answer-checking step to catch and re-route misclassified or unfaithful responses.
+- **Table + text fusion retrieval** — answer mixed questions that span both the employee database and policy documents in a single response, fusing structured and unstructured sources.
 
 ---
 
