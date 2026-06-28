@@ -1,10 +1,17 @@
-"""frontend/app.py — VaultDesk Streamlit UI with custom chat bubbles."""
+"""
+streamlit_app.py — VaultDesk, single-file deployable version.
+
+This calls the RAG/SQL engine and auth functions DIRECTLY (in-process)
+instead of going through the FastAPI backend over HTTP. That lets it deploy
+as one service on Streamlit Community Cloud. The FastAPI code still exists
+in the repo (app/main.py) as the "real API" architecture.
+"""
 
 import html
-import requests
 import streamlit as st
 
-API_URL = "http://127.0.0.1:8000"
+from app.utils.auth import verify_user
+from app.services.rag import answer_question
 
 ROLE_THEME = {
     "c-level":     ("Executive",   "#C9A227", "all company data across every department"),
@@ -29,7 +36,6 @@ def inject_css(accent="#2D7D6E"):
         background:linear-gradient(135deg,{accent},#1B2A4A); border-radius:14px;
         padding:14px 22px; margin-bottom:18px; box-shadow:0 4px 18px rgba(15,23,41,0.10); }}
     .vd-brand {{ font-size:21px; font-weight:800; color:#fff; letter-spacing:-0.4px; }}
-    .vd-right {{ display:flex; align-items:center; gap:14px; }}
     .vd-user {{ color:#fff; font-size:14px; font-weight:600; opacity:0.95; }}
 
     .vd-hero {{ background:#fff; border:1px solid #E4E8EE; border-radius:16px;
@@ -48,12 +54,10 @@ def inject_css(accent="#2D7D6E"):
     .vd-login-head h3 {{ font-size:22px; font-weight:700; color:#0F1729; margin:0 0 4px 0; }}
     .vd-login-head p {{ color:#5B6B7F; font-size:13.5px; margin:0; }}
 
-    /* Force ALL input text/labels dark & inputs white */
     .stTextInput label, [data-testid="stWidgetLabel"] {{ color:#0F1729 !important; font-weight:600 !important; font-size:13px !important; }}
     .stTextInput input, .stTextInput input[type="password"] {{
         background:#fff !important; color:#0F1729 !important; -webkit-text-fill-color:#0F1729 !important;
-        caret-color:#0F1729 !important;
-        border:1px solid #D9DEE6 !important; border-radius:9px !important; }}
+        caret-color:#0F1729 !important; border:1px solid #D9DEE6 !important; border-radius:9px !important; }}
     .stButton button {{ background:{accent} !important; color:#fff !important; border:none !important;
         border-radius:9px !important; font-weight:600 !important; padding:7px 18px !important; }}
     .stButton button:hover {{ filter:brightness(1.07); }}
@@ -78,11 +82,10 @@ def inject_css(accent="#2D7D6E"):
     .vd-src b {{ color:#5B6B7F; font-weight:600; }}
     .vd-src span {{ display:block; margin:2px 0; }}
 
-    /* Force chat input light across Streamlit versions */
     [data-testid="stChatInput"], div[data-baseweb="textarea"], .stChatInput, .stChatInput > div {{
         background:#fff !important; border-radius:12px !important; }}
     [data-testid="stChatInput"] textarea, .stChatInput textarea, div[data-baseweb="textarea"] textarea {{
-        background:#fff !important; color:#0F1729 !important; -webkit-text-fill-color:#0F1729 !important; 
+        background:#fff !important; color:#0F1729 !important; -webkit-text-fill-color:#0F1729 !important;
         caret-color:#0F1729 !important; }}
     [data-testid="stChatInput"] textarea::placeholder, .stChatInput textarea::placeholder {{ color:#9AA6B5 !important; }}
 
@@ -95,23 +98,21 @@ def inject_css(accent="#2D7D6E"):
     </style>""", unsafe_allow_html=True)
 
 
-if "token" not in st.session_state:
-    st.session_state.token = None
+if "role" not in st.session_state:
     st.session_state.role = None
     st.session_state.username = None
     st.session_state.messages = []
 
 
 def do_signout():
-    st.session_state.token = None
     st.session_state.role = None
     st.session_state.username = None
     st.session_state.messages = []
     st.rerun()
 
+
 def topbar(accent, username=None, show_signout=False, key_suffix=""):
     if show_signout:
-        # Split into columns only when we need room for the sign-out button.
         col1, col2 = st.columns([5, 1])
         with col1:
             right = f'<span class="vd-user">Hi, {html.escape(username)}</span>' if username else '<span class="vd-user">Secure internal assistant</span>'
@@ -122,7 +123,6 @@ def topbar(accent, username=None, show_signout=False, key_suffix=""):
             if st.button("Sign out", key=f"signout_{key_suffix}"):
                 do_signout()
     else:
-        # Full-width bar, no columns.
         right = f'<span class="vd-user">Hi, {html.escape(username)}</span>' if username else '<span class="vd-user">Secure internal assistant</span>'
         st.markdown(f'<div class="vd-topbar"><div class="vd-brand">🔐 VaultDesk</div>'
                     f'<div class="vd-right">{right}</div></div>', unsafe_allow_html=True)
@@ -154,30 +154,27 @@ def render_login():
             if not username or not password:
                 st.warning("Enter both username and password.")
             else:
+                # DIRECT call to the auth function (no HTTP / FastAPI).
                 try:
-                    resp = requests.post(f"{API_URL}/login",
-                                         json={"username": username, "password": password}, timeout=10)
-                except requests.exceptions.RequestException:
-                    st.error("Can't reach the server. Is the backend running?"); resp = None
-                if resp is not None:
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        st.session_state.token = data["access_token"]
-                        st.session_state.role = data["role"]
-                        st.session_state.username = username
-                        label, _, scope = ROLE_THEME.get(data["role"], ("", "", "general information"))
-                        st.session_state.messages = [{"role": "assistant",
-                            "content": f"Hi {username}! I'm VaultDesk. Ask me anything about {scope} — I'll only answer from documents your {label} clearance allows.",
-                            "sources": []}]
-                        st.rerun()
-                    else:
-                        st.error("Invalid username or password.")
+                    user = verify_user(username, password)
+                except Exception:
+                    user = None
+                if user:
+                    st.session_state.role = user["role"]
+                    st.session_state.username = username
+                    label, _, scope = ROLE_THEME.get(user["role"], ("", "", "general information"))
+                    st.session_state.messages = [{
+                        "role": "assistant",
+                        "content": f"Hi {username}! I'm VaultDesk. Ask me anything about {scope} — I'll only answer from documents your {label} clearance allows.",
+                        "sources": []}]
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
 
 
 def render_home():
     role = st.session_state.role
     label, accent, scope = ROLE_THEME.get(role, ("", "#2D7D6E", "general information"))
-
 
     st.markdown(f'<div class="vd-hero"><h1>Welcome back, {html.escape(st.session_state.username)}.</h1>'
                 f'<p>VaultDesk answers your questions from company documents and shows you only what '
@@ -200,32 +197,25 @@ def render_home():
 
     if prompt := st.chat_input("Ask about company knowledge..."):
         st.session_state.messages.append({"role": "user", "content": prompt, "sources": []})
+        # Build recent history (exclude the message we just appended).
+        hist = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages[:-1]
+            if m["role"] in ("user", "assistant")
+        ][-6:]
+        # DIRECT call to the engine (no HTTP / FastAPI).
         try:
-            # Send recent conversation (excluding the greeting and the message
-            # we just appended) so the backend can contextualize follow-ups.
-            hist = [
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages[:-1]
-                if m["role"] in ("user", "assistant")
-            ][-6:]
-            resp = requests.post(f"{API_URL}/chat",
-                                 headers={"Authorization": f"Bearer {st.session_state.token}"},
-                                 json={"message": prompt, "history": hist}, timeout=60)
-        except requests.exceptions.RequestException:
-            st.session_state.messages.append({"role": "assistant",
-                "content": "I can't reach the server right now.", "sources": []})
-            st.rerun(); resp = None
-        if resp is not None:
-            if resp.status_code == 200:
-                data = resp.json()
-                st.session_state.messages.append({"role": "assistant",
-                    "content": data["answer"], "sources": data.get("sources", [])})
-            elif resp.status_code == 401:
-                st.session_state.messages.append({"role": "assistant",
-                    "content": "Your session expired. Please sign out and sign in again.", "sources": []})
-            else:
-                st.session_state.messages.append({"role": "assistant",
-                    "content": "Something went wrong fetching the answer.", "sources": []})
+            result = answer_question(prompt, role=role, history=hist)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": result["answer"],
+                "sources": result.get("sources", []),
+            })
+        except Exception:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "Something went wrong answering that. Please try again.",
+                "sources": []})
         st.rerun()
 
 
@@ -233,12 +223,12 @@ def render_about():
     st.markdown('<div class="vd-hero"><h1>About VaultDesk</h1>'
                 '<p>VaultDesk is an internal assistant that answers questions from company documents '
                 'while respecting role-based access — each person sees only what their clearance permits. '
-                'It pairs retrieval-augmented generation with secure, role-aware access control.</p></div>',
-                unsafe_allow_html=True)
-    caps = [("🔐", "Role-based access control", "Document chunks are tagged by department; retrieval is filtered to your role and re-checked by a guard."),
+                'It pairs retrieval-augmented generation with structured-query routing and secure, '
+                'role-aware access control.</p></div>', unsafe_allow_html=True)
+    caps = [("🔐", "Role-based access control", "Document chunks are tagged by department; retrieval is filtered to your role and re-checked by a guard. Access holds across both the document and database paths."),
+            ("🗄️", "Structured-query routing", "Precise questions about employee data are answered with exact database queries, not fuzzy search."),
             ("📑", "Grounded, cited answers", "Generated only from retrieved documents, with sources — no hallucination."),
-            ("🔑", "Secure JWT sign-in", "Hashed passwords and signed tokens carry your role; it can't be forged client-side."),
-            ("🚀", "On the roadmap", "Single Sign-On (OIDC) and a human-in-the-loop step when sources conflict.")]
+            ("📊", "Measured quality", "An evaluation framework scores faithfulness, relevance, and conciseness to validate the system.")]
     cols = st.columns(2)
     for i, (ic, h, p) in enumerate(caps):
         with cols[i % 2]:
@@ -247,22 +237,21 @@ def render_about():
             st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
 
+# route
 accent = "#2D7D6E"
 if st.session_state.role:
     _, accent, _ = ROLE_THEME.get(st.session_state.role, ("", "#2D7D6E", ""))
 inject_css(accent)
 
-# Brand bar at the very top, once, above the tabs.
-_ = topbar(accent,
-       st.session_state.username if st.session_state.token else None,
-       show_signout=bool(st.session_state.token),
+topbar(accent,
+       st.session_state.username if st.session_state.role else None,
+       show_signout=bool(st.session_state.role),
        key_suffix="top")
-
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
 tab_home, tab_about = st.tabs(["Home", "About"])
 with tab_home:
-    if st.session_state.token:
+    if st.session_state.role:
         render_home()
     else:
         render_login()

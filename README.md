@@ -2,54 +2,77 @@
 
 VaultDesk is an internal AI assistant that answers questions from company documents while respecting **role-based access control (RBAC)**. Each user sees only what their clearance permits — a finance user can't retrieve HR salary data, an employee can't see marketing reports, and a C-level executive sees everything.
 
-It pairs **retrieval-augmented generation (RAG)** with a secure, role-aware access layer, so answers are grounded in real company documents, cited to their source, and filtered by who's asking.
+It combines **retrieval-augmented generation (RAG)** for documents with **structured-query routing** for tabular data, all behind a secure, role-aware access layer.
 
 ---
 
 ## Why it exists
 
-Internal knowledge bases face a tension: make information easy to find, but don't leak sensitive data across departments. A naive chatbot with one shared knowledge base lets anyone surface anything. VaultDesk solves this by enforcing access control **at retrieval time** — unauthorized documents are never even fetched, so they can't reach the language model or the answer.
+Internal knowledge bases face a tension: make information easy to find, but don't leak sensitive data across departments. A naive chatbot with one shared knowledge base lets anyone surface anything. VaultDesk enforces access control **at retrieval time** — unauthorized data is never even fetched, so it can't reach the language model or the answer.
+
+---
+
+## The core insight
+
+The company's knowledge isn't one kind of data — it's two:
+
+- **Prose documents** (engineering, finance, marketing, general policies) — semantic search handles these well.
+- **A structured employee table** (HR) — semantic search is *bad* at precise lookups over tabular data, because 100 near-identical rows look the same in vector space.
+
+So VaultDesk routes each question to the right tool: structured questions (a person's salary, headcounts, averages) go to a **SQL engine** that queries the table exactly; everything else goes through the **RAG pipeline**.
 
 ---
 
 ## How it works
 
-A signed-in user sends a question. The backend:
+A signed-in user asks a question. The backend:
 
-1. Verifies the user's **JWT** and reads their role from it.
-2. **Rewrites** vague follow-ups (e.g. "why?") into standalone questions using conversation history.
-3. **Embeds** the query and **searches ChromaDB**, filtered to the roles the user is allowed to see (RBAC).
-4. Runs an independent **guard** that re-checks each retrieved chunk's role before anything reaches the model (defense in depth).
-5. Builds a grounded prompt and **generates** the answer with Groq / Llama 3.1.
-6. Returns the answer plus the **sources** it actually used.
+1. Verifies the user's **JWT** and reads their role.
+2. **Rewrites** vague follow-ups into standalone questions using conversation history.
+3. If the user is cleared for HR data, tries the **SQL path**: generate a query, run it on the employee table, return an exact answer. Falls back to RAG if the question isn't a table question or the query yields nothing.
+4. Otherwise (or on fallback), runs **RAG**: embed the query, search the vector store *filtered to allowed roles*, rerank for precision, re-check access with a guard, and generate a grounded, cited answer.
 
 ```mermaid
 flowchart TD
     A[User signs in] --> B[JWT issued, carries role]
-    B --> C[Question + history → /chat]
-    C --> D[Rewrite follow-up into standalone question]
-    D --> E[Embed query with BGE]
-    E --> F[Search ChromaDB — filtered to allowed roles]
-    F --> G[Guard: re-check each chunk's role]
-    G --> H[Build grounded prompt + generate with Groq]
-    H --> I[Answer + source citations]
+    B --> C[Question + history]
+    C --> D{HR-cleared and a table question?}
+    D -- yes --> E[SQL: generate query, run on employee table]
+    E --> F{Got a valid result?}
+    F -- yes --> Z[Answer]
+    F -- no --> G[RAG path]
+    D -- no --> G[RAG path]
+    G --> H[Embed query, search vector store filtered to role]
+    H --> I[Rerank, guard, generate with citations]
+    I --> Z[Answer]
 ```
-
-### Two phases
-
-- **Ingestion (run once):** company documents are chunked, tagged by department, embedded into vectors, and stored in ChromaDB.
-- **Serving:** users log in and ask questions; the system retrieves role-scoped chunks and generates cited answers.
 
 ---
 
 ## Key features
 
-- **Role-based access control** — every document chunk is tagged by department. Retrieval is filtered to the user's allowed roles, then an independent guard re-checks each result before generation (defense in depth).
-- **Grounded, cited answers** — responses come only from retrieved documents, each answer listing the sources it actually used. No hallucination.
-- **Structure-aware chunking** — Markdown is split by heading hierarchy (preserving the heading path for precise citations); CSV rows are converted to natural-language chunks so tabular data is searchable.
-- **History-aware retrieval** — vague follow-ups are rewritten into standalone questions using conversation context before retrieval.
+- **Role-based access control** — every document chunk is tagged by department. Retrieval is filtered to the user's allowed roles, then an independent guard re-checks each result before generation. Access is enforced across **both** the document and database paths.
+- **Structured-query routing** — precise questions about employee data are answered with exact SQL queries (DuckDB), unlocking lookups *and* aggregations (counts, averages) that semantic search can't do.
+- **Cross-encoder reranking** — retrieved candidates are re-scored for relevance to sharpen precision.
+- **Grounded, cited answers** — responses come only from retrieved documents or query results, with sources. No hallucination.
+- **Structure-aware chunking** — Markdown split by heading hierarchy (preserving the heading path for citations); CSV rows converted to natural-language chunks.
+- **History-aware retrieval** — vague follow-ups are rewritten into standalone questions before retrieval.
 - **Secure authentication** — JWT with bcrypt-hashed passwords; the role is carried in a signed token that can't be forged client-side.
-- **Clearance-themed UI** — a Streamlit interface that color-codes the session by the user's role, making access level visible at a glance.
+- **Evaluation framework** — an automated pipeline generates a balanced test set from the documents and scores answers on faithfulness, relevance, and conciseness, enabling before/after measurement of changes.
+
+---
+
+## Results
+
+The system was evaluated on a balanced test set (questions per department) scored on faithfulness, relevance, and conciseness:
+
+| Change | Overall | HR score |
+|--------|---------|----------|
+| RAG baseline | 0.842 | 0.562 |
+| + Reranker | 0.828 | 0.604 |
+| + SQL routing | **0.862** | **0.733** |
+
+The key finding: HR (tabular data) was the weak spot for pure semantic search, and **SQL routing lifted HR from 0.56 to 0.73** — a structural fix that retrieval tuning alone couldn't achieve.
 
 ---
 
@@ -73,8 +96,10 @@ flowchart TD
 | Backend API | FastAPI |
 | Frontend | Streamlit |
 | Vector store | ChromaDB |
-| Embeddings | BAAI/bge-small-en-v1.5 (sentence-transformers) |
-| LLM | Groq · Llama 3.1 8B |
+| Embeddings | BAAI/bge-small-en-v1.5 |
+| Reranker | BAAI/bge-reranker-base |
+| Structured queries | DuckDB |
+| LLM | Groq · Llama 3.1 |
 | Auth | JWT + bcrypt |
 
 ---
@@ -88,18 +113,22 @@ flowchart TD
     - **chunking.py** — documents → tagged chunks
     - **embeddings.py** — BGE embedding wrapper
     - **vectorstore.py** — Chroma build + RBAC-filtered search
-    - **rag.py** — retrieve + guard + generate
+    - **reranker.py** — cross-encoder reranking
+    - **sql_engine.py** — DuckDB engine + read-only query guard
+    - **router.py** — text-to-SQL with RAG fallback
+    - **rag.py** — orchestrates SQL fork + RAG path
     - **llm.py** — Groq calls + query rewriting
   - **utils/**
     - **auth.py** — JWT issue/verify, password hashing
     - **permissions.py** — role → allowed-roles map
 - **frontend/app.py** — Streamlit UI
-- **scripts/hash_passwords.py** — one-time: hash demo passwords
-- **resources/data/** — company documents, by department (engineering, finance, general, hr, marketing)
+- **scripts/**
+  - **hash_passwords.py** — one-time: hash demo passwords
+  - **evaluate.py** — RAG evaluation framework
+- **resources/data/** — company documents, by department
 - **chroma_store/** — persisted vectors (generated, gitignored)
 - **users.json** — demo users (gitignored)
 - **.env** — secrets (gitignored)
-- **requirements.txt**
 
 ---
 
@@ -114,7 +143,7 @@ pip install -r requirements.txt
 
 ### 2. Configure secrets
 
-Create a `.env` file in the project root:
+Create a `.env` file:
 
 ```bash
 GROQ_API_KEY=your_groq_key_here
@@ -123,21 +152,14 @@ JWT_SECRET=your_long_random_secret
 
 Get a free Groq API key at https://console.groq.com. Generate a JWT secret with `python -c "import secrets; print(secrets.token_hex(32))"`.
 
-### 3. Set up demo users
-
-`users.json` holds demo accounts with bcrypt-hashed passwords (gitignored). If creating fresh, add usernames/roles, then run:
+### 3. Set up demo users and build the index
 
 ```bash
 python scripts/hash_passwords.py
-```
-
-### 4. Build the vector index (one-time)
-
-```bash
 python -m app.services.vectorstore
 ```
 
-### 5. Run
+### 4. Run
 
 Backend (terminal 1):
 
@@ -151,32 +173,19 @@ Frontend (terminal 2):
 streamlit run frontend/app.py
 ```
 
-Open the Streamlit URL, sign in, and ask away.
+### 5. (Optional) Run the evaluation
 
----
-
-## Demonstrating RBAC
-
-Sign in as different roles and ask the **same question**:
-
-- As a **Marketing** user: *"What were the key marketing campaigns?"* → a detailed, cited answer from the marketing reports.
-- As an **HR** user: the same question → *"I don't have that information."* — the marketing documents are outside HR's clearance and are never retrieved.
-
-The contrast shows access control working at the data level, not just in the UI.
-
----
-
-## Design
-
-The interface uses a **clearance-as-identity** concept: once signed in, the user's role color-codes the whole session (Executive gold, Finance teal, HR violet, Marketing coral, Engineering blue, Employee slate), so access level is visible at a glance. The layout is a branded top bar, Home/About tabs, and a chat that greets the user by name — answers render as cards with their sources listed beneath.
+```bash
+python -m scripts.evaluate
+```
 
 ---
 
 ## Roadmap
 
 - **Single Sign-On (SSO)** — integrate enterprise identity providers (OIDC) so access is managed centrally.
-- **Human-in-the-loop** — when retrieved sources are relevant but conflict, surface them and let the user choose which to prioritize.
-- **Reranking** — add a cross-encoder reranker to sharpen retrieval on ambiguous queries.
+- **Human-in-the-loop** — when retrieved sources conflict, surface them and let the user choose which to prioritize.
+- **Self-verification** — an answer-checking step to catch and re-route misclassified or unfaithful responses.
 
 ---
 

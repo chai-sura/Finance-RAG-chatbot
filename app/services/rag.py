@@ -10,6 +10,7 @@ from app.services.reranker import rerank
 from app.services.vectorstore import search
 from app.services.llm import generate, rewrite_query
 from app.utils.permissions import allowed_roles_for
+from app.services.router import answer_with_sql
 
 SYSTEM_PROMPT = (
     "You are FinSolve's internal assistant. Answer the user's question using "
@@ -78,26 +79,28 @@ def _split_answer_and_sources(raw: str, chunks: list) -> tuple:
     return answer, sources
 
 def answer_question(question: str, role: str, history: list = None, k: int = 8) -> dict:
-    """Full RAG flow. Rewrites follow-ups into standalone questions using
-    history, then retrieves (RBAC-filtered), guards, and generates."""
     history = history or []
-
-    # Rewrite vague follow-ups ("why", "what do you mean") into standalone
-    # questions BEFORE retrieval, so they retrieve the right chunks.
     search_query = rewrite_query(history, question)
-
     allowed = allowed_roles_for(role)
 
-    # Cast a WIDER net for the reranker to choose from (retrieve more, then
-    # rerank down). 20 candidates in, best 5 out.
+    # --- SQL fork ---
+    # Only users allowed to see HR data can have questions routed to the
+    # employee table. This keeps RBAC intact across both paths.
+    if "hr" in allowed:
+        sql_result = answer_with_sql(search_query)
+        if sql_result["ok"]:
+            return {"answer": sql_result["answer"], "sources": sql_result["sources"]}
+    # If not HR-authorized, or SQL didn't apply, fall through to RAG below.
+
+    # --- RAG path ---
+    # Cast a wider net for the reranker, then guard, then rerank down.
     results = search(search_query, k=20, allowed_roles=allowed)
 
     docs = results["documents"][0]
     metas = results["metadatas"][0]
 
-    # Guard FIRST (drop anything outside the user's clearance), then rerank
-    # the allowed candidates. Order matters: never let the reranker even
-    # consider unauthorized chunks.
+    # Defense-in-depth: drop anything outside the user's clearance BEFORE
+    # reranking, so the reranker never even sees unauthorized chunks.
     allowed_candidates = [
         (doc, meta) for doc, meta in zip(docs, metas) if meta["role"] in allowed
     ]
@@ -116,7 +119,6 @@ def answer_question(question: str, role: str, history: list = None, k: int = 8) 
     answer, sources = _split_answer_and_sources(raw, safe)
 
     return {"answer": answer, "sources": sources}
-
 
 if __name__ == "__main__":
     q = "What were the key marketing campaigns and their performance?"
