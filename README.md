@@ -6,6 +6,30 @@ It combines **retrieval-augmented generation (RAG)** for documents with **struct
 
 ---
 
+## Screenshots
+
+**Sign in — access is scoped to your clearance**
+
+![Login](docs/screenshots/login.png)
+
+**Marketing user: answers campaign questions, but is denied employee data**
+
+A single conversation showing both sides of access control — the marketing report is answered with citations, while a question about employee headcount (HR data) is correctly refused.
+
+![Marketing view](docs/screenshots/Marketing-info.png)
+
+**C-Level executive: full access across departments, including exact SQL aggregations**
+
+Marketing campaigns, quarterly revenue, and per-department headcounts — answered from documents and the employee database, each with its source.
+
+![C-level view](docs/screenshots/C-level-info.png)
+
+**Engineering user: answers technical docs, denied HR data**
+
+![Engineering view](docs/screenshots/HR-info.png)
+
+---
+
 ## Why it exists
 
 Internal knowledge bases face a tension: make information easy to find, but don't leak sensitive data across departments. A naive chatbot with one shared knowledge base lets anyone surface anything. VaultDesk enforces access control **at retrieval time** — unauthorized data is never even fetched, so it can't reach the language model or the answer.
@@ -28,8 +52,8 @@ So VaultDesk routes each question to the right tool: structured questions (a per
 A signed-in user asks a question. The backend:
 
 1. Verifies the user's **JWT** and reads their role.
-2. **Rewrites** vague follow-ups into standalone questions using conversation history.
-3. If the user is cleared for HR data, tries the **SQL path**: generate a query, run it on the employee table, return an exact answer. Falls back to RAG if the question isn't a table question or the query yields nothing.
+2. **Rewrites** vague follow-ups into standalone questions using conversation history (only when the question actually depends on prior context).
+3. If the user is cleared for HR data, tries the **SQL path**: generate a query, run it on the employee table, and verify the answer fits the question. Falls back to RAG if it's not a table question, the query yields nothing, or the answer doesn't fit.
 4. Otherwise (or on fallback), runs **RAG**: embed the query, search the vector store *filtered to allowed roles*, rerank for precision, re-check access with a guard, and generate a grounded, cited answer.
 
 ```mermaid
@@ -37,8 +61,8 @@ flowchart TD
     A[User signs in] --> B[JWT issued, carries role]
     B --> C[Question + history]
     C --> D{HR-cleared and a table question?}
-    D -- yes --> E[SQL: generate query, run on employee table]
-    E --> F{Got a valid result?}
+    D -- yes --> E[SQL: generate query, run, self-verify]
+    E --> F{Valid and fits the question?}
     F -- yes --> Z[Answer]
     F -- no --> G[RAG path]
     D -- no --> G[RAG path]
@@ -53,10 +77,11 @@ flowchart TD
 
 - **Role-based access control** — every document chunk is tagged by department. Retrieval is filtered to the user's allowed roles, then an independent guard re-checks each result before generation. Access is enforced across **both** the document and database paths.
 - **Structured-query routing** — precise questions about employee data are answered with exact SQL queries (DuckDB), unlocking lookups *and* aggregations (counts, averages) that semantic search can't do.
+- **Self-verification** — the SQL path checks that its answer genuinely fits the question (e.g. a "revenue" question isn't answered by summing employee salaries), falling back to RAG when it doesn't.
 - **Cross-encoder reranking** — retrieved candidates are re-scored for relevance to sharpen precision.
 - **Grounded, cited answers** — responses come only from retrieved documents or query results, with sources. No hallucination.
 - **Structure-aware chunking** — Markdown split by heading hierarchy (preserving the heading path for citations); CSV rows converted to natural-language chunks.
-- **History-aware retrieval** — vague follow-ups are rewritten into standalone questions before retrieval.
+- **History-aware retrieval** — context-dependent follow-ups are rewritten into standalone questions before retrieval; self-contained questions pass through unchanged.
 - **Secure authentication** — JWT with bcrypt-hashed passwords; the role is carried in a signed token that can't be forged client-side.
 - **Evaluation framework** — an automated pipeline generates a balanced test set from the documents and scores answers on faithfulness, relevance, and conciseness, enabling before/after measurement of changes.
 
@@ -64,7 +89,7 @@ flowchart TD
 
 ## Results
 
-The system was evaluated on a balanced test set (questions per department) scored on faithfulness, relevance, and conciseness:
+Evaluated on a balanced test set (questions per department) scored on faithfulness, relevance, and conciseness:
 
 | Change | Overall | HR score |
 |--------|---------|----------|
@@ -73,6 +98,8 @@ The system was evaluated on a balanced test set (questions per department) score
 | + SQL routing | **0.862** | **0.733** |
 
 The key finding: HR (tabular data) was the weak spot for pure semantic search, and **SQL routing lifted HR from 0.56 to 0.73** — a structural fix that retrieval tuning alone couldn't achieve.
+
+A role-by-role behavior suite (six roles, with cross-department denials and conversational follow-ups) confirms RBAC holds across both the document and database paths — no role retrieves another department's protected data.
 
 ---
 
@@ -115,16 +142,17 @@ The key finding: HR (tabular data) was the weak spot for pure semantic search, a
     - **vectorstore.py** — Chroma build + RBAC-filtered search
     - **reranker.py** — cross-encoder reranking
     - **sql_engine.py** — DuckDB engine + read-only query guard
-    - **router.py** — text-to-SQL with RAG fallback
+    - **router.py** — text-to-SQL with self-verification and RAG fallback
     - **rag.py** — orchestrates SQL fork + RAG path
     - **llm.py** — Groq calls + query rewriting
   - **utils/**
     - **auth.py** — JWT issue/verify, password hashing
     - **permissions.py** — role → allowed-roles map
-- **frontend/app.py** — Streamlit UI
+- **frontend/** — Streamlit UI
 - **scripts/**
   - **hash_passwords.py** — one-time: hash demo passwords
   - **evaluate.py** — RAG evaluation framework
+  - **check_roles.py** — role-by-role behavior verification
 - **resources/data/** — company documents, by department
 - **chroma_store/** — persisted vectors (generated, gitignored)
 - **users.json** — demo users (gitignored)
@@ -173,18 +201,38 @@ Frontend (terminal 2):
 streamlit run frontend/app.py
 ```
 
-### 5. (Optional) Run the evaluation
+### 5. (Optional) Evaluate or verify behavior
 
 ```bash
 python -m scripts.evaluate
+python -m scripts.check_roles
 ```
+
+---
+
+## Demonstrating RBAC
+
+Sign in as different roles and ask the **same question**:
+
+- As a **Marketing** user: *"What were the key marketing campaigns?"* → a detailed, cited answer.
+- As an **HR** user: the same question → *"I don't have that information."* — the marketing documents are outside HR's clearance and are never retrieved.
+
+The contrast shows access control working at the data level, not just in the UI.
+
+---
+
+## Known limitations
+
+- **Compound cross-department questions** — a single question spanning two sources (e.g. *"what were the marketing campaigns and what is the test coverage?"*) is routed to one path, so one half may go unanswered. The roadmap item below (table + text fusion) addresses this. Ask one topic per question for best results.
+- **Small-model classification** — query routing runs on an 8B model, so genuinely ambiguous questions occasionally misroute; the self-verification step and RAG fallback mitigate this.
+- **Scale** — demonstrated on a focused corpus (hundreds of chunks), not production-scale volumes.
 
 ---
 
 ## Roadmap
 
-- **Self-verification** — an answer-checking step to catch and re-route misclassified or unfaithful responses.
-- **Table + text fusion retrieval** — answer mixed questions that span both the employee database and policy documents in a single response, fusing structured and unstructured sources.
+- **Table + text fusion retrieval** — answer mixed questions spanning both the employee database and policy documents in a single response, fusing structured and unstructured sources.
+- **Audit & analytics dashboard** — surface query patterns, per-role usage, and access-denied events, turning the access-control layer into observable security insight.
 
 ---
 
