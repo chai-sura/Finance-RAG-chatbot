@@ -231,8 +231,8 @@ The contrast shows access control working at the data level, not just in the UI.
 
 ## Roadmap
 
-- **Table + text fusion retrieval** — answer mixed questions spanning both the employee database and policy documents in a single response, fusing structured and unstructured sources.
-- **Audit & analytics dashboard** — surface query patterns, per-role usage, and access-denied events, turning the access-control layer into observable security insight.
+- **Audit logging & analytics** — Tamper-evident trail of every query, requester role, and access outcome (SOC 2 / GDPR ready).
+- **Centralized identity & RBAC** — SSO via OIDC/SAML with dynamic, centrally managed access policies.
 
 ---
 
